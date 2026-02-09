@@ -1,0 +1,5 @@
+{
+  "name": "CulinaSched: Culinary Scheduling Engine",
+  "description": "A constraint-based scheduling platform for culinary departments to manage student workers, shift requirements, and fairness-driven optimization.",
+  "requestFramePermissions": []
+}
