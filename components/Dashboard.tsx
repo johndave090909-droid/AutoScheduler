@@ -49,16 +49,45 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
 
   // ── Firestore: seed defaults then subscribe to real-time data ──
   useEffect(() => {
+    let unsubDepts: (() => void) | null = null;
+    let unsubShifts: (() => void) | null = null;
+    let cancelled = false;
+
+    const fallbackToDefaults = () => {
+      if (cancelled) return;
+      setDepartments(DEFAULT_DEPARTMENTS);
+      setShifts(generateDefaultShifts(DEFAULT_DEPARTMENTS));
+    };
+
+    const startSubscriptions = () => {
+      if (cancelled) return;
+      unsubDepts = subscribeDepartments(
+        (firestoreDepts) => {
+          if (!cancelled) setDepartments(firestoreDepts.length > 0 ? firestoreDepts : DEFAULT_DEPARTMENTS);
+        },
+        () => fallbackToDefaults()
+      );
+      unsubShifts = subscribeShifts(
+        (firestoreShifts) => {
+          if (!cancelled) setShifts(firestoreShifts.length > 0 ? firestoreShifts : generateDefaultShifts(DEFAULT_DEPARTMENTS));
+        },
+        () => fallbackToDefaults()
+      );
+    };
+
     const defaultShifts = generateDefaultShifts(DEFAULT_DEPARTMENTS);
-    seedIfEmpty(DEFAULT_DEPARTMENTS, defaultShifts).then(() => {
-      const unsubDepts = subscribeDepartments((firestoreDepts) => {
-        setDepartments(firestoreDepts.length > 0 ? firestoreDepts : DEFAULT_DEPARTMENTS);
+    seedIfEmpty(DEFAULT_DEPARTMENTS, defaultShifts)
+      .then(() => startSubscriptions())
+      .catch(() => {
+        // Firestore unavailable — use local defaults
+        fallbackToDefaults();
       });
-      const unsubShifts = subscribeShifts((firestoreShifts) => {
-        setShifts(firestoreShifts);
-      });
-      return () => { unsubDepts(); unsubShifts(); };
-    });
+
+    return () => {
+      cancelled = true;
+      if (unsubDepts) unsubDepts();
+      if (unsubShifts) unsubShifts();
+    };
   }, []);
 
   const handleOptimize = () => {

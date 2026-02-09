@@ -4,13 +4,13 @@ import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCWZa1bi04b3bHkNQRHEnlOXUAS_9utABA",
-  authDomain: "progression-tracking.firebaseapp.com",
-  projectId: "progression-tracking",
-  storageBucket: "progression-tracking.firebasestorage.app",
-  messagingSenderId: "619162418208",
-  appId: "1:619162418208:web:36816de59df185a62c1045",
-  measurementId: "G-9NCEJW06SL"
+  apiKey: "AIzaSyDvnhFArkVb0_YvjA2drqjhtofTSlaQ8ac",
+  authDomain: "autoscheduler-12140.firebaseapp.com",
+  projectId: "autoscheduler-12140",
+  storageBucket: "autoscheduler-12140.firebasestorage.app",
+  messagingSenderId: "690062324731",
+  appId: "1:690062324731:web:c8cf161d623ee1afd5515e",
+  measurementId: "G-0EL3MWSGMT"
 };
 
 const app = initializeApp(firebaseConfig);

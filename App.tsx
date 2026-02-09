@@ -17,12 +17,18 @@ const App: React.FC = () => {
 
   // Subscribe to Firestore students collection (real-time)
   useEffect(() => {
-    const unsub = subscribeStudents((firestoreStudents) => {
-      if (!pendingWrite.current) {
-        setStudents(firestoreStudents);
+    const unsub = subscribeStudents(
+      (firestoreStudents) => {
+        if (!pendingWrite.current) {
+          setStudents(firestoreStudents);
+        }
+        setInitialized(true);
+      },
+      (_err) => {
+        // Firestore failed (e.g. permission denied) — still initialize with empty data
+        setInitialized(true);
       }
-      setInitialized(true);
-    });
+    );
     return () => unsub();
   }, []);
 
