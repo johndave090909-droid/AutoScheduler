@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Student, ShiftRequirement, ScheduleResult, DayOfWeek, Department, ClassBlock } from '../types';
 import { solveScheduleHeuristic } from '../services/schedulerService';
-import { DAYS, DEFAULT_DEPARTMENTS, generateDefaultShifts } from '../constants';
+import { DAYS, DEFAULT_DEPARTMENTS, DEFAULT_STUDENTS, generateDefaultShifts } from '../constants';
 import { subscribeShifts, saveShifts, subscribeDepartments, saveDepartments, seedIfEmpty } from '../services/firestoreService';
 import Modal, { ModalHeader, ModalBody, ModalFooter, ModalSection, Field, BtnPrimary, BtnSecondary, BtnDanger, inputClass, selectClass } from './Modal';
 
@@ -40,7 +40,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
   const [confirmDeleteModal, setConfirmDeleteModal] = useState<ConfirmDeleteModalState>({ open: false, deptId: '', roleName: '' });
 
   const [addWorkerModal, setAddWorkerModal] = useState<AddWorkerModalState>({ open: false });
-  const [workerForm, setWorkerForm] = useState({ name: '', deptId: '', skill: '' });
+  const [workerForm, setWorkerForm] = useState({ name: '', idNumber: '', deptId: '', skill: '' });
   const [workerFormError, setWorkerFormError] = useState('');
 
   const [busyBlockModal, setBusyBlockModal] = useState<AddBusyBlockModalState>({ open: false, stuId: '' });
@@ -76,7 +76,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
     };
 
     const defaultShifts = generateDefaultShifts(DEFAULT_DEPARTMENTS);
-    seedIfEmpty(DEFAULT_DEPARTMENTS, defaultShifts)
+    seedIfEmpty(DEFAULT_DEPARTMENTS, defaultShifts, DEFAULT_STUDENTS)
       .then(() => startSubscriptions())
       .catch(() => {
         // Firestore unavailable — use local defaults
@@ -150,7 +150,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
 
   // ── Add Worker ────────────────────────────────────────────────
   const openAddWorkerModal = () => {
-    setWorkerForm({ name: '', deptId: departments[0]?.id || '', skill: '' });
+    setWorkerForm({ name: '', idNumber: '', deptId: departments[0]?.id || '', skill: '' });
     setWorkerFormError('');
     setAddWorkerModal({ open: true });
   };
@@ -162,11 +162,14 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
 
   const submitAddWorker = () => {
     if (!workerForm.name.trim()) { setWorkerFormError('Worker name is required'); return; }
+    if (!workerForm.idNumber.trim()) { setWorkerFormError('ID number is required'); return; }
+    if (students.some(s => s.idNumber === workerForm.idNumber.trim())) { setWorkerFormError('This ID number is already in use'); return; }
     if (!workerForm.deptId) { setWorkerFormError('Please select a department'); return; }
     if (!workerForm.skill) { setWorkerFormError('Please select a role'); return; }
 
     const newStudent: Student = {
       id: `STU-${Date.now()}`,
+      idNumber: workerForm.idNumber.trim(),
       name: workerForm.name.trim(),
       skill: workerForm.skill,
       departmentId: workerForm.deptId,
@@ -474,7 +477,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
                         </div>
                         <div>
                           <h4 className="text-2xl font-black text-gray-900">{stu.name}</h4>
-                          <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest">{stu.id}</span>
+                          <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest">ID: {stu.idNumber}</span>
                         </div>
                       </div>
                       <div className="space-y-4">
@@ -608,15 +611,25 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
         />
         <ModalBody>
           <ModalSection label="Personal Info">
-            <Field label="Full Name" hint="Enter the worker's display name">
-              <input
-                className={inputClass}
-                placeholder="e.g. Juan Dela Cruz"
-                value={workerForm.name}
-                onChange={e => { setWorkerForm(prev => ({ ...prev, name: e.target.value })); setWorkerFormError(''); }}
-                autoFocus
-              />
-            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Full Name" hint="Enter the worker's display name">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. Juan Dela Cruz"
+                  value={workerForm.name}
+                  onChange={e => { setWorkerForm(prev => ({ ...prev, name: e.target.value })); setWorkerFormError(''); }}
+                  autoFocus
+                />
+              </Field>
+              <Field label="ID Number" hint="Unique student/employee ID">
+                <input
+                  className={inputClass}
+                  placeholder="e.g. 2081500"
+                  value={workerForm.idNumber}
+                  onChange={e => { setWorkerForm(prev => ({ ...prev, idNumber: e.target.value })); setWorkerFormError(''); }}
+                />
+              </Field>
+            </div>
           </ModalSection>
 
           <ModalSection label="Assignment">

@@ -96,7 +96,8 @@ export const saveDepartments = async (departments: Department[]): Promise<void> 
 // ─── Seed defaults if collections are empty ───────────────────────
 export const seedIfEmpty = async (
   defaultDepts: Department[],
-  defaultShifts: ShiftRequirement[]
+  defaultShifts: ShiftRequirement[],
+  defaultStudents?: Student[]
 ): Promise<void> => {
   const deptsSnap = await getDocs(collection(db, DEPARTMENTS_COL));
   if (deptsSnap.empty) {
@@ -113,6 +114,12 @@ export const seedIfEmpty = async (
         batch.set(doc(db, SHIFTS_COL, s.id), s);
       });
       await batch.commit();
+    }
+  }
+  if (defaultStudents && defaultStudents.length > 0) {
+    const studentsSnap = await getDocs(collection(db, STUDENTS_COL));
+    if (studentsSnap.empty) {
+      await saveStudents(defaultStudents);
     }
   }
 };

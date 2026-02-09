@@ -9,9 +9,10 @@ export interface ClassBlock {
 
 export interface Student {
   id: string;
+  idNumber: string; // e.g. "2081500"
   name: string;
   password?: string;
-  skill: string; 
+  skill: string;
   departmentId: string;
   seniority: number; // 1-10
   unavailability: ClassBlock[]; // Mark as "Busy"

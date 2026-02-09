@@ -22,7 +22,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, students }) => {
       return;
     }
 
-    const student = students.find(s => s.id === username && s.password === password);
+    const student = students.find(s => s.idNumber === username && s.password === password);
     if (student) {
       onLogin('student', student);
     } else {
@@ -48,7 +48,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, students }) => {
               type="text"
               required
               className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-              placeholder="e.g. STU-101 or admin"
+              placeholder="e.g. 2081500 or admin"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
             />
