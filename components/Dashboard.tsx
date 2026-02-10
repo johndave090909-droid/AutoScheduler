@@ -23,6 +23,8 @@ const format12h = (time24: string): string => {
 interface AddRoleModalState { open: boolean; deptId: string; }
 interface ConfirmDeleteModalState { open: boolean; deptId: string; roleName: string; }
 interface AddWorkerModalState { open: boolean; }
+interface EditWorkerModalState { open: boolean; stuId: string; }
+interface TerminateModalState { open: boolean; stuId: string; stuName: string; }
 interface AddBusyBlockModalState { open: boolean; stuId: string; }
 
 const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => {
@@ -42,6 +44,12 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
   const [addWorkerModal, setAddWorkerModal] = useState<AddWorkerModalState>({ open: false });
   const [workerForm, setWorkerForm] = useState({ name: '', idNumber: '', deptId: '', skill: '' });
   const [workerFormError, setWorkerFormError] = useState('');
+
+  const [editWorkerModal, setEditWorkerModal] = useState<EditWorkerModalState>({ open: false, stuId: '' });
+  const [editWorkerForm, setEditWorkerForm] = useState({ idNumber: '', deptId: '', skill: '' });
+  const [editWorkerFormError, setEditWorkerFormError] = useState('');
+
+  const [terminateModal, setTerminateModal] = useState<TerminateModalState>({ open: false, stuId: '', stuName: '' });
 
   const [busyBlockModal, setBusyBlockModal] = useState<AddBusyBlockModalState>({ open: false, stuId: '' });
   const [busyBlockForm, setBusyBlockForm] = useState<{ day: DayOfWeek; start: string; end: string }>({ day: 'Monday', start: '09:00', end: '12:00' });
@@ -79,7 +87,6 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
     seedIfEmpty(DEFAULT_DEPARTMENTS, defaultShifts, DEFAULT_STUDENTS)
       .then(() => startSubscriptions())
       .catch(() => {
-        // Firestore unavailable — use local defaults
         fallbackToDefaults();
       });
 
@@ -183,6 +190,44 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
     setAddWorkerModal({ open: false });
   };
 
+  // ── Edit Worker ─────────────────────────────────────────────
+  const editDeptPositions = useMemo(() => {
+    const dept = departments.find(d => d.id === editWorkerForm.deptId);
+    return dept?.positions || [];
+  }, [departments, editWorkerForm.deptId]);
+
+  const openEditWorkerModal = (stu: Student) => {
+    setEditWorkerForm({ idNumber: stu.idNumber, deptId: stu.departmentId, skill: stu.skill });
+    setEditWorkerFormError('');
+    setEditWorkerModal({ open: true, stuId: stu.id });
+  };
+
+  const submitEditWorker = () => {
+    if (!editWorkerForm.idNumber.trim()) { setEditWorkerFormError('ID number is required'); return; }
+    const duplicate = students.find(s => s.idNumber === editWorkerForm.idNumber.trim() && s.id !== editWorkerModal.stuId);
+    if (duplicate) { setEditWorkerFormError('This ID number is already in use'); return; }
+    if (!editWorkerForm.deptId) { setEditWorkerFormError('Please select a department'); return; }
+    if (!editWorkerForm.skill) { setEditWorkerFormError('Please select a role'); return; }
+
+    onUpdateStudents(students.map(s => s.id === editWorkerModal.stuId ? {
+      ...s,
+      idNumber: editWorkerForm.idNumber.trim(),
+      departmentId: editWorkerForm.deptId,
+      skill: editWorkerForm.skill
+    } : s));
+    setEditWorkerModal({ open: false, stuId: '' });
+  };
+
+  // ── Terminate Worker ────────────────────────────────────────
+  const openTerminateModal = (stu: Student) => {
+    setTerminateModal({ open: true, stuId: stu.id, stuName: stu.name });
+  };
+
+  const submitTerminate = () => {
+    onUpdateStudents(students.filter(s => s.id !== terminateModal.stuId));
+    setTerminateModal({ open: false, stuId: '', stuName: '' });
+  };
+
   // ── Add Busy Block ────────────────────────────────────────────
   const openBusyBlockModal = (stuId: string) => {
     setBusyBlockForm({ day: 'Monday', start: '09:00', end: '12:00' });
@@ -202,6 +247,24 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
   const updateWorkerUnavailability = (stuId: string, unavailability: ClassBlock[]) => {
     onUpdateStudents(students.map(s => s.id === stuId ? { ...s, unavailability } : s));
   };
+
+  // ── Sort students: leads first within each department ──────
+  const sortedStudentsByDept = useMemo(() => {
+    const grouped: Record<string, Student[]> = {};
+    departments.forEach(dept => { grouped[dept.id] = []; });
+    students.forEach(stu => {
+      if (grouped[stu.departmentId]) grouped[stu.departmentId].push(stu);
+    });
+    // Sort each group: leads first
+    Object.keys(grouped).forEach(deptId => {
+      grouped[deptId].sort((a, b) => {
+        const aIsLead = a.skill.toLowerCase().includes('lead') || a.skill.toLowerCase().includes('apprenticeship') ? 1 : 0;
+        const bIsLead = b.skill.toLowerCase().includes('lead') || b.skill.toLowerCase().includes('apprenticeship') ? 1 : 0;
+        return bIsLead - aIsLead;
+      });
+    });
+    return grouped;
+  }, [students, departments]);
 
   const matrixData = useMemo(() => {
     if (!result) return null;
@@ -225,6 +288,9 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
 
     return data;
   }, [result, shifts, students]);
+
+  // ── Availability link URL ────────────────────────────────────
+  const availabilityLink = `${window.location.origin}${window.location.pathname}?availability=true`;
 
   return (
     <div className="max-w-[1800px] mx-auto px-4 py-8">
@@ -283,7 +349,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
               <thead>
                 <tr className="bg-gray-50 border-b-2 border-gray-200">
                   <th className="p-6 text-left font-black uppercase tracking-widest text-gray-400 w-64 border-r-2 border-gray-100 sticky left-0 bg-gray-50 z-20">Name</th>
-                  <th className="p-6 text-left font-black uppercase tracking-widest text-gray-400 w-40 border-r-2 border-gray-100">Role Anchor</th>
+                  <th className="p-6 text-left font-black uppercase tracking-widest text-gray-400 border-r-2 border-gray-100" style={{minWidth: '180px'}}>Role Anchor</th>
                   {DAYS.map(day => (
                     <th key={day} className="p-6 text-center font-black uppercase tracking-widest text-gray-400 border-r-2 border-gray-100">
                       {day}
@@ -304,7 +370,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
                   </tr>
                 ) : (
                   departments.map(dept => {
-                    const deptStudents = students.filter(s => s.departmentId === dept.id);
+                    const deptStudents = sortedStudentsByDept[dept.id] || [];
                     if (deptStudents.length === 0) return null;
                     return (
                       <React.Fragment key={dept.id}>
@@ -319,7 +385,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
                               {stu.name}
                             </td>
                             <td className="p-6 font-bold text-gray-500 border-r-2 border-gray-100">
-                              <span className={`px-4 py-2 rounded-xl border ${stu.skill.toLowerCase().includes('lead') ? 'bg-black text-white' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                              <span className={`inline-block px-4 py-2 rounded-xl border whitespace-normal break-words ${stu.skill.toLowerCase().includes('lead') || stu.skill.toLowerCase().includes('apprenticeship') ? 'bg-black text-white' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
                                 {stu.skill}
                               </span>
                             </td>
@@ -446,9 +512,36 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
       )}
 
       {activeTab === 'workers' && (
-        <div className="space-y-10">
-          <div className="bg-white p-12 rounded-[3.5rem] shadow-sm border border-gray-100">
-            <div className="flex justify-between items-center mb-12">
+        <div className="space-y-8">
+          {/* Student Availability Link Banner */}
+          <div className="bg-indigo-50 border-2 border-indigo-100 rounded-3xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-500 rounded-2xl flex items-center justify-center text-white">
+                <i className="fas fa-link"></i>
+              </div>
+              <div>
+                <p className="text-sm font-black text-indigo-900">Student Self-Service Availability Link</p>
+                <p className="text-[11px] text-indigo-500 font-semibold mt-0.5">Share this link so students can submit their own busy blocks</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <input
+                readOnly
+                value={availabilityLink}
+                className="flex-1 sm:w-80 bg-white border-2 border-indigo-200 rounded-xl px-4 py-3 text-xs font-bold text-indigo-800 outline-none"
+                onFocus={e => e.target.select()}
+              />
+              <button
+                onClick={() => { navigator.clipboard.writeText(availabilityLink); }}
+                className="bg-indigo-500 text-white px-5 py-3 rounded-xl font-black text-xs hover:bg-indigo-600 transition-all flex items-center gap-2 whitespace-nowrap"
+              >
+                <i className="fas fa-copy"></i> Copy
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white p-8 rounded-[3.5rem] shadow-sm border border-gray-100">
+            <div className="flex justify-between items-center mb-8">
               <div>
                 <h3 className="text-4xl font-black text-gray-900 tracking-tighter">Workers Registry</h3>
                 <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mt-1">Manage Availability & Role Anchors</p>
@@ -461,82 +554,114 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-8">
-              {students.length === 0 ? (
-                <div className="py-32 text-center bg-gray-50 rounded-[3rem] border-4 border-dashed border-gray-100">
-                   <i className="fas fa-ghost text-5xl text-gray-200 mb-6"></i>
-                   <p className="text-2xl font-black text-gray-300">Roster is Empty</p>
-                </div>
-              ) : (
-                students.map(stu => (
-                  <div key={stu.id} className="bg-white border-4 border-gray-50 rounded-[3rem] p-10 shadow-sm hover:border-gray-100 transition-all flex flex-col lg:flex-row gap-12">
-                    <div className="lg:w-1/3 border-b lg:border-b-0 lg:border-r border-gray-100 pb-10 lg:pb-0 lg:pr-10">
-                      <div className="flex items-center gap-6 mb-8">
-                        <div className="w-20 h-20 bg-gray-900 rounded-[2rem] flex items-center justify-center text-white text-2xl font-black">
-                          {stu.name.charAt(0)}
-                        </div>
-                        <div>
-                          <h4 className="text-2xl font-black text-gray-900">{stu.name}</h4>
-                          <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest">ID: {stu.idNumber}</span>
-                        </div>
+            {students.length === 0 ? (
+              <div className="py-32 text-center bg-gray-50 rounded-[3rem] border-4 border-dashed border-gray-100">
+                 <i className="fas fa-ghost text-5xl text-gray-200 mb-6"></i>
+                 <p className="text-2xl font-black text-gray-300">Roster is Empty</p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {departments.map(dept => {
+                  const deptStudents = sortedStudentsByDept[dept.id] || [];
+                  if (deptStudents.length === 0) return null;
+                  return (
+                    <div key={dept.id}>
+                      {/* Department Header */}
+                      <div className={`${dept.color} rounded-t-2xl px-6 py-3 border-2 border-b-0 border-gray-100 flex items-center gap-3`}>
+                        <i className="fas fa-layer-group text-gray-500 text-sm"></i>
+                        <span className="text-[11px] font-black text-gray-700 uppercase tracking-[0.15em]">{dept.name}</span>
+                        <span className="text-[10px] font-bold text-gray-400 ml-1">({deptStudents.length})</span>
                       </div>
-                      <div className="space-y-4">
-                        <div className="flex justify-between text-sm">
-                          <span className="font-bold text-gray-400 uppercase tracking-widest text-[10px]">Division</span>
-                          <span className="font-black text-gray-700">{departments.find(d => d.id === stu.departmentId)?.name}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="font-bold text-gray-400 uppercase tracking-widest text-[10px]">Anchor Role</span>
-                          <span className="font-black text-gray-700 px-3 py-1 bg-gray-50 rounded-lg border border-gray-100">{stu.skill}</span>
-                        </div>
-                        <button
-                          onClick={() => onUpdateStudents(students.filter(s => s.id !== stu.id))}
-                          className="w-full mt-6 py-4 bg-red-50 text-red-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all"
-                        >
-                          Terminate Worker
-                        </button>
+                      {/* Workers List */}
+                      <div className="border-2 border-gray-100 rounded-b-2xl overflow-hidden">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="bg-gray-50 border-b-2 border-gray-100">
+                              <th className="px-6 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest w-16"></th>
+                              <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Name</th>
+                              <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">ID</th>
+                              <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Anchor Role</th>
+                              <th className="px-4 py-3 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Busy Blocks</th>
+                              <th className="px-4 py-3 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest w-40">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {deptStudents.map((stu, idx) => {
+                              const isLead = stu.skill.toLowerCase().includes('lead') || stu.skill.toLowerCase().includes('apprenticeship');
+                              return (
+                                <tr key={stu.id} className={`border-b border-gray-50 hover:bg-gray-50/50 transition-all group ${idx === 0 && isLead ? 'bg-amber-50/30' : ''}`}>
+                                  <td className="px-6 py-3 text-center">
+                                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black ${isLead ? 'bg-black text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                      {stu.name.charAt(0)}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-black text-sm text-gray-900">{stu.name}</span>
+                                      {isLead && <span className="text-[9px] font-black bg-black text-white px-2 py-0.5 rounded-md uppercase">Lead</span>}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs font-bold text-indigo-500 font-mono">{stu.idNumber || '—'}</span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="text-xs font-black text-gray-600 whitespace-normal">{stu.skill}</span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    {stu.unavailability.length === 0 ? (
+                                      <span className="text-[10px] text-gray-300 font-bold italic">Full availability</span>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {stu.unavailability.map((b, bIdx) => (
+                                          <span key={bIdx} className="inline-flex items-center gap-1 bg-red-50 text-red-600 text-[10px] font-bold px-2 py-1 rounded-lg border border-red-100">
+                                            {b.day.slice(0, 3)} {format12h(b.start)}-{format12h(b.end)}
+                                            <button
+                                              onClick={() => updateWorkerUnavailability(stu.id, stu.unavailability.filter((_, i) => i !== bIdx))}
+                                              className="text-red-300 hover:text-red-600 ml-0.5"
+                                            >
+                                              <i className="fas fa-xmark text-[9px]"></i>
+                                            </button>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <button
+                                        onClick={() => openBusyBlockModal(stu.id)}
+                                        title="Add busy block"
+                                        className="text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 w-8 h-8 rounded-lg flex items-center justify-center transition-all"
+                                      >
+                                        <i className="fas fa-clock text-xs"></i>
+                                      </button>
+                                      <button
+                                        onClick={() => openEditWorkerModal(stu)}
+                                        title="Edit worker"
+                                        className="text-gray-300 hover:text-blue-500 hover:bg-blue-50 w-8 h-8 rounded-lg flex items-center justify-center transition-all"
+                                      >
+                                        <i className="fas fa-pen text-xs"></i>
+                                      </button>
+                                      <button
+                                        onClick={() => openTerminateModal(stu)}
+                                        title="Terminate worker"
+                                        className="text-gray-300 hover:text-red-500 hover:bg-red-50 w-8 h-8 rounded-lg flex items-center justify-center transition-all"
+                                      >
+                                        <i className="fas fa-user-minus text-xs"></i>
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-                    <div className="flex-grow">
-                      <div className="flex justify-between items-center mb-8">
-                         <h5 className="text-xl font-black text-gray-900 flex items-center gap-3">
-                           <i className="fas fa-user-lock text-red-500"></i>
-                           Busy Blocks (Unavailability)
-                         </h5>
-                         <button
-                           onClick={() => openBusyBlockModal(stu.id)}
-                           className="text-xs font-black bg-gray-100 px-6 py-3 rounded-xl hover:bg-gray-200 transition-all"
-                         >
-                           + Add Block
-                         </button>
-                      </div>
-                      <div className="flex flex-wrap gap-4">
-                        {stu.unavailability.length === 0 ? (
-                          <div className="w-full py-10 bg-gray-50 border-2 border-dashed border-gray-100 rounded-[2rem] text-center text-gray-300 font-bold italic">
-                            Full availability (No busy blocks)
-                          </div>
-                        ) : (
-                          stu.unavailability.map((b, idx) => (
-                            <div key={idx} className="bg-white border-2 border-gray-100 rounded-3xl p-6 flex justify-between items-center gap-6 shadow-sm group">
-                              <div>
-                                <div className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1">{b.day}</div>
-                                <div className="text-sm font-black text-gray-800">{format12h(b.start)} — {format12h(b.end)}</div>
-                              </div>
-                              <button
-                                onClick={() => updateWorkerUnavailability(stu.id, stu.unavailability.filter((_, i) => i !== idx))}
-                                className="text-gray-200 group-hover:text-red-500 transition-colors"
-                              >
-                                <i className="fas fa-circle-xmark text-xl"></i>
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -678,6 +803,100 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
           <BtnPrimary onClick={submitAddWorker}>
             <i className="fas fa-user-plus mr-2"></i>Add Worker
           </BtnPrimary>
+        </ModalFooter>
+      </Modal>
+
+      {/* ── Edit Worker Modal ──────────────────────────────────── */}
+      <Modal isOpen={editWorkerModal.open} onClose={() => setEditWorkerModal({ open: false, stuId: '' })}>
+        <ModalHeader
+          icon="fa-pen-to-square"
+          title="Edit Worker"
+          subtitle={`Editing: ${students.find(s => s.id === editWorkerModal.stuId)?.name || ''}`}
+          onClose={() => setEditWorkerModal({ open: false, stuId: '' })}
+        />
+        <ModalBody>
+          <ModalSection label="Identification">
+            <Field label="ID Number" hint="Unique student/employee ID">
+              <input
+                className={inputClass}
+                placeholder="e.g. 2081500"
+                value={editWorkerForm.idNumber}
+                onChange={e => { setEditWorkerForm(prev => ({ ...prev, idNumber: e.target.value })); setEditWorkerFormError(''); }}
+                autoFocus
+              />
+            </Field>
+          </ModalSection>
+
+          <ModalSection label="Assignment">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Department">
+                <div className="relative">
+                  <select
+                    className={selectClass}
+                    value={editWorkerForm.deptId}
+                    onChange={e => setEditWorkerForm(prev => ({ ...prev, deptId: e.target.value, skill: '' }))}
+                  >
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <i className="fas fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none"></i>
+                </div>
+              </Field>
+              <Field label="Role Anchor" hint="Must match a defined role">
+                <div className="relative">
+                  <select
+                    className={selectClass}
+                    value={editWorkerForm.skill}
+                    onChange={e => { setEditWorkerForm(prev => ({ ...prev, skill: e.target.value })); setEditWorkerFormError(''); }}
+                  >
+                    <option value="">Select role...</option>
+                    {editDeptPositions.map(pos => (
+                      <option key={pos} value={pos}>{pos}</option>
+                    ))}
+                  </select>
+                  <i className="fas fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none"></i>
+                </div>
+              </Field>
+            </div>
+          </ModalSection>
+
+          {editWorkerFormError && (
+            <div className="bg-red-50 rounded-2xl p-4 flex items-center gap-3 border border-red-100">
+              <i className="fas fa-exclamation-circle text-red-400"></i>
+              <p className="text-[11px] text-red-600 font-bold">{editWorkerFormError}</p>
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <BtnSecondary onClick={() => setEditWorkerModal({ open: false, stuId: '' })}>Cancel</BtnSecondary>
+          <BtnPrimary onClick={submitEditWorker}>
+            <i className="fas fa-check mr-2"></i>Save Changes
+          </BtnPrimary>
+        </ModalFooter>
+      </Modal>
+
+      {/* ── Terminate Worker Confirmation Modal ────────────────── */}
+      <Modal isOpen={terminateModal.open} onClose={() => setTerminateModal({ open: false, stuId: '', stuName: '' })} size="sm">
+        <ModalHeader
+          icon="fa-user-minus"
+          iconBg="bg-red-500"
+          title="Terminate Worker"
+          subtitle="This action cannot be undone"
+          onClose={() => setTerminateModal({ open: false, stuId: '', stuName: '' })}
+        />
+        <ModalBody>
+          <div className="bg-red-50 rounded-2xl p-6 border border-red-100 mb-2">
+            <p className="text-sm text-red-800 font-bold leading-relaxed">
+              Are you sure you wish to proceed with termination of <span className="font-black">"{terminateModal.stuName}"</span>? This will remove them from the roster and all associated data.
+            </p>
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <BtnSecondary onClick={() => setTerminateModal({ open: false, stuId: '', stuName: '' })}>Cancel</BtnSecondary>
+          <BtnDanger onClick={submitTerminate}>
+            <i className="fas fa-user-minus mr-2"></i>Terminate
+          </BtnDanger>
         </ModalFooter>
       </Modal>
 

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Dashboard from './components/Dashboard';
 import Login from './components/Login';
 import StudentPortal from './components/StudentPortal';
+import StudentAvailability from './components/StudentAvailability';
 import { Student } from './types';
 import { subscribeStudents, saveStudents, saveStudent } from './services/firestoreService';
 
@@ -11,6 +12,9 @@ const App: React.FC = () => {
   const [userRole, setUserRole] = useState<'admin' | 'student' | null>(null);
   const [currentUser, setCurrentUser] = useState<Student | null>(null);
   const [initialized, setInitialized] = useState(false);
+
+  // Check if this is the student availability portal
+  const isAvailabilityPortal = new URLSearchParams(window.location.search).get('availability') === 'true';
 
   // Track whether a local update is pending so we don't echo Firestore snapshots back
   const pendingWrite = useRef(false);
@@ -57,6 +61,11 @@ const App: React.FC = () => {
   };
 
   if (!initialized) return null;
+
+  // Student availability portal — standalone page, no login required
+  if (isAvailabilityPortal) {
+    return <StudentAvailability />;
+  }
 
   if (!userRole) {
     return <Login onLogin={handleLogin} students={students} />;
