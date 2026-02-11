@@ -1,5 +1,5 @@
 
-import { Student, ShiftRequirement, Assignment, ScheduleResult, DayOfWeek } from '../types';
+import { Student, ShiftRequirement, Assignment, ScheduleResult, DayOfWeek, PinnedAssignment } from '../types';
 import { DAYS } from '../constants';
 
 const timeToMins = (timeStr: string): number => {
@@ -14,7 +14,7 @@ const minsToTime = (mins: number): string => {
 };
 
 const getValidOffset = (student: Student, day: DayOfWeek, sStart: number, sEnd: number): number | null => {
-  const offsets = [0, -15, 15]; 
+  const offsets = [0, -15, 15];
   for (const offset of offsets) {
     const adjStart = sStart + offset;
     const adjEnd = sEnd + offset;
@@ -23,7 +23,7 @@ const getValidOffset = (student: Student, day: DayOfWeek, sStart: number, sEnd: 
       if (block.day !== day) return false;
       const bStart = timeToMins(block.start);
       const bEnd = timeToMins(block.end);
-      
+
       const overlapStart = Math.max(adjStart, bStart);
       const overlapEnd = Math.min(adjEnd, bEnd);
       const overlapMins = overlapEnd - overlapStart;
@@ -36,11 +36,56 @@ const getValidOffset = (student: Student, day: DayOfWeek, sStart: number, sEnd: 
   return null;
 };
 
-export const solveScheduleHeuristic = (students: Student[], shifts: ShiftRequirement[]): ScheduleResult => {
+export const solveScheduleHeuristic = (
+  students: Student[],
+  shifts: ShiftRequirement[],
+  pinnedAssignments?: PinnedAssignment[],
+  manualOverrides?: Assignment[]
+): ScheduleResult => {
   const assignments: Assignment[] = [];
   const validationErrors: string[] = [];
-  
-  // 1. Role Exclusivity Check: One Lead per Department
+
+  // Track which students are already assigned (pinned students are pre-assigned)
+  const studentAssignments: Record<string, Set<DayOfWeek>> = {};
+  students.forEach(s => studentAssignments[s.id] = new Set());
+
+  // 1. Apply pinned assignments first — these are fixed and immutable
+  const pinnedStudentIds = new Set<string>();
+  if (pinnedAssignments && pinnedAssignments.length > 0) {
+    pinnedAssignments.forEach(pin => {
+      pinnedStudentIds.add(pin.studentId);
+      studentAssignments[pin.studentId]?.add(pin.day);
+      // Find the matching shift for this pin
+      const matchingShift = shifts.find(s =>
+        s.day === pin.day &&
+        students.find(st => st.id === pin.studentId)?.departmentId === s.departmentId &&
+        students.find(st => st.id === pin.studentId)?.skill === s.skill
+      );
+      if (matchingShift) {
+        assignments.push({
+          shiftId: `${matchingShift.id}_0`,
+          studentId: pin.studentId,
+          adjustedStart: pin.startTime,
+          adjustedEnd: pin.endTime,
+          pinned: true
+        });
+      }
+    });
+  }
+
+  // 2. Apply manual overrides — these take precedence over auto
+  if (manualOverrides && manualOverrides.length > 0) {
+    manualOverrides.forEach(override => {
+      if (override.studentId) {
+        studentAssignments[override.studentId]?.add(
+          shifts.find(s => override.shiftId.startsWith(s.id))?.day || 'Monday'
+        );
+      }
+      assignments.push({ ...override });
+    });
+  }
+
+  // 3. Role Exclusivity Check: One Lead per Department
   const deptLeads: Record<string, string[]> = {};
   students.forEach(s => {
     if (s.skill.toLowerCase().includes('lead')) {
@@ -55,12 +100,12 @@ export const solveScheduleHeuristic = (students: Student[], shifts: ShiftRequire
     }
   });
 
-  const studentAssignments: Record<string, Set<DayOfWeek>> = {};
-  students.forEach(s => studentAssignments[s.id] = new Set());
+  // 4. Filter out noRequirement shifts from auto-scheduling (they're fully flexible)
+  const schedulableShifts = shifts.filter(s => !s.noRequirement);
 
   // Group shifts by Role and Time
   const timeSkillGroups: Record<string, ShiftRequirement[]> = {};
-  shifts.forEach(s => {
+  schedulableShifts.forEach(s => {
     const key = `${s.startTime}-${s.endTime}-${s.skill}-${s.departmentId}`;
     if (!timeSkillGroups[key]) timeSkillGroups[key] = [];
     timeSkillGroups[key].push(s);
@@ -81,10 +126,18 @@ export const solveScheduleHeuristic = (students: Student[], shifts: ShiftRequire
     const maxCount = Math.max(...groupShifts.map(s => s.count));
 
     for (let i = 0; i < maxCount; i++) {
+      // Check if already assigned (by pin or manual override)
+      const alreadyAssigned = assignments.some(a =>
+        groupShifts.some(gs => a.shiftId === `${gs.id}_${i}`) && a.studentId
+      );
+      if (alreadyAssigned) continue;
+
       // Count how many days actually need filling in this iteration
       const daysNeedingFill = DAYS.filter(d => groupShifts.some(gs => gs.day === d && gs.count > i)).length;
 
       const candidates = students.filter(student => {
+        // Skip pinned students — they're already placed
+        if (pinnedStudentIds.has(student.id)) return false;
         if (student.departmentId !== firstShift.departmentId) return false;
         const isLeadShift = firstShift.skill.toLowerCase().includes('lead');
         const isLeadStudent = student.skill.toLowerCase().includes('lead');
@@ -128,7 +181,7 @@ export const solveScheduleHeuristic = (students: Student[], shifts: ShiftRequire
   });
 
   // Gaps
-  shifts.forEach(s => {
+  schedulableShifts.forEach(s => {
     for (let i = 0; i < s.count; i++) {
       const exists = assignments.some(a => a.shiftId === `${s.id}_${i}`);
       if (!exists) {
@@ -137,10 +190,10 @@ export const solveScheduleHeuristic = (students: Student[], shifts: ShiftRequire
     }
   });
 
-  return { 
-    assignments, 
-    unassignedCount: assignments.filter(a => !a.studentId).length, 
+  return {
+    assignments,
+    unassignedCount: assignments.filter(a => !a.studentId).length,
     fairnessScore: 100,
-    validationErrors 
+    validationErrors
   };
 };

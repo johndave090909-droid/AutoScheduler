@@ -18,6 +18,8 @@ export interface Student {
   unavailability: ClassBlock[]; // Mark as "Busy"
   maxHours: number;
   currentHours: number;
+  scheduleFileUrl?: string; // Uploaded semester schedule image URL (base64)
+  availabilityStatus?: 'draft' | 'submitted'; // Draft vs submitted state
 }
 
 export interface Department {
@@ -35,13 +37,23 @@ export interface ShiftRequirement {
   skill: string;
   departmentId: string;
   count: number;
+  noRequirement?: boolean; // "No Shift Requirement" — worker has total flexibility
+}
+
+export interface PinnedAssignment {
+  id: string; // `${studentId}-${day}`
+  studentId: string;
+  day: DayOfWeek;
+  startTime: string;
+  endTime: string;
 }
 
 export interface Assignment {
   shiftId: string;
-  studentId: string | null; 
-  adjustedStart?: string; 
+  studentId: string | null;
+  adjustedStart?: string;
   adjustedEnd?: string;
+  pinned?: boolean; // Whether this is a manual lock
 }
 
 export interface ScheduleResult {

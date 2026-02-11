@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Student, ShiftRequirement, ScheduleResult, DayOfWeek, Department, ClassBlock } from '../types';
+import { Student, ShiftRequirement, ScheduleResult, DayOfWeek, Department, ClassBlock, PinnedAssignment, Assignment } from '../types';
 import { solveScheduleHeuristic } from '../services/schedulerService';
 import { DAYS, DEFAULT_DEPARTMENTS, DEFAULT_STUDENTS, generateDefaultShifts } from '../constants';
 import { subscribeShifts, saveShifts, subscribeDepartments, saveDepartments, seedIfEmpty } from '../services/firestoreService';
@@ -55,6 +55,10 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
   const [busyBlockForm, setBusyBlockForm] = useState<{ day: DayOfWeek; start: string; end: string }>({ day: 'Monday', start: '09:00', end: '12:00' });
   const [busyBlockError, setBusyBlockError] = useState('');
 
+  // ── Pinned Assignments & Manual Overrides ───────────────────
+  const [pinnedAssignments, setPinnedAssignments] = useState<PinnedAssignment[]>([]);
+  const [manualOverrides, setManualOverrides] = useState<Assignment[]>([]);
+
   // ── Firestore: seed defaults then subscribe to real-time data ──
   useEffect(() => {
     let unsubDepts: (() => void) | null = null;
@@ -100,7 +104,7 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
   const handleOptimize = () => {
     setIsOptimizing(true);
     setTimeout(() => {
-      const res = solveScheduleHeuristic(students, shifts);
+      const res = solveScheduleHeuristic(students, shifts, pinnedAssignments, manualOverrides);
       setResult(res);
       setIsOptimizing(false);
     }, 1200);
@@ -248,6 +252,28 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
     onUpdateStudents(students.map(s => s.id === stuId ? { ...s, unavailability } : s));
   };
 
+  // ── Pin / Unpin a worker on a specific day ──────────────────
+  const togglePin = (studentId: string, day: DayOfWeek, startTime: string, endTime: string) => {
+    const pinId = `${studentId}-${day}`;
+    const exists = pinnedAssignments.find(p => p.id === pinId);
+    if (exists) {
+      setPinnedAssignments(prev => prev.filter(p => p.id !== pinId));
+    } else {
+      setPinnedAssignments(prev => [...prev, { id: pinId, studentId, day, startTime, endTime }]);
+    }
+  };
+
+  // ── Manual time override on a matrix cell ───────────────────
+  const handleMatrixTimeEdit = (studentId: string, day: DayOfWeek, shiftId: string, field: 'adjustedStart' | 'adjustedEnd', value: string) => {
+    setManualOverrides(prev => {
+      const existing = prev.find(o => o.shiftId === shiftId && o.studentId === studentId);
+      if (existing) {
+        return prev.map(o => o.shiftId === shiftId && o.studentId === studentId ? { ...o, [field]: value } : o);
+      }
+      return [...prev, { shiftId, studentId, [field]: value }];
+    });
+  };
+
   // ── Sort students: leads first within each department ──────
   const sortedStudentsByDept = useMemo(() => {
     const grouped: Record<string, Student[]> = {};
@@ -391,13 +417,40 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
                             </td>
                             {DAYS.map(day => {
                               const shiftsOnDay = matrixData?.[stu.id]?.[day] || [];
+                              const isPinned = pinnedAssignments.some(p => p.studentId === stu.id && p.day === day);
+                              // Find the assignment for this student+day to get shiftId for editing
+                              const dayAssignment = result?.assignments.find(a => {
+                                if (a.studentId !== stu.id) return false;
+                                const sId = a.shiftId.split('_')[0];
+                                const sh = shifts.find(s => s.id === sId);
+                                return sh?.day === day;
+                              });
                               return (
-                                <td key={day} className="p-4 border-r-2 border-gray-100 text-center">
+                                <td key={day} className={`p-4 border-r-2 border-gray-100 text-center ${isPinned ? 'bg-amber-50/50' : ''}`}>
                                   {shiftsOnDay.length > 0 ? (
                                     <div className="flex flex-col gap-2">
                                       {shiftsOnDay.map((s, idx) => (
-                                        <div key={idx} className="bg-white border-2 border-gray-100 rounded-2xl py-3 px-4 font-black text-gray-800 shadow-sm leading-none text-xs">
-                                          {s}
+                                        <div key={idx} className={`rounded-2xl py-3 px-4 font-black shadow-sm leading-none text-xs relative group/cell ${isPinned ? 'bg-amber-50 border-2 border-amber-300 text-amber-900' : 'bg-white border-2 border-gray-100 text-gray-800'}`}>
+                                          <div className="flex items-center justify-center gap-1">
+                                            {isPinned && <i className="fas fa-thumbtack text-amber-500 text-[9px]"></i>}
+                                            <span>{s}</span>
+                                          </div>
+                                          {/* Pin/Unpin + Edit controls */}
+                                          {dayAssignment && (
+                                            <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                                              <button
+                                                onClick={() => {
+                                                  const sId = dayAssignment.shiftId.split('_')[0];
+                                                  const sh = shifts.find(ss => ss.id === sId);
+                                                  if (sh) togglePin(stu.id, day, dayAssignment.adjustedStart || sh.startTime, dayAssignment.adjustedEnd || sh.endTime);
+                                                }}
+                                                title={isPinned ? 'Unpin' : 'Pin to this slot'}
+                                                className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] shadow-md transition-all ${isPinned ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-white text-gray-400 hover:text-black border border-gray-200'}`}
+                                              >
+                                                <i className="fas fa-thumbtack"></i>
+                                              </button>
+                                            </div>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
@@ -466,27 +519,40 @@ const Dashboard: React.FC<DashboardProps> = ({ students, onUpdateStudents }) => 
                             return (
                               <td key={day} className="p-4 border-r-2 border-gray-50">
                                 {dayShifts.map(s => (
-                                  <div key={s.id} className="bg-white p-5 rounded-[2rem] border-2 border-gray-100 shadow-sm space-y-4">
+                                  <div key={s.id} className={`bg-white p-5 rounded-[2rem] border-2 shadow-sm space-y-4 ${s.noRequirement ? 'border-green-200 bg-green-50/30' : 'border-gray-100'}`}>
                                     <div className="flex justify-between items-center text-[11px] font-black text-indigo-500 uppercase tracking-widest">
-                                      <span>Requirement</span>
-                                      <div className="flex items-center gap-3">
-                                        <span className="text-gray-300">QTY:</span>
-                                        <input
-                                          type="number" className="w-12 bg-gray-50 border-2 border-gray-100 rounded-xl p-1.5 text-center font-black focus:border-black outline-none"
-                                          value={s.count} onChange={e => handleShiftUpdate(s.id, 'count', parseInt(e.target.value))}
-                                        />
-                                      </div>
+                                      <span>{s.noRequirement ? <span className="text-green-600">Flexible</span> : 'Requirement'}</span>
+                                      {!s.noRequirement && (
+                                        <div className="flex items-center gap-3">
+                                          <span className="text-gray-300">QTY:</span>
+                                          <input
+                                            type="number" className="w-12 bg-gray-50 border-2 border-gray-100 rounded-xl p-1.5 text-center font-black focus:border-black outline-none"
+                                            value={s.count} onChange={e => handleShiftUpdate(s.id, 'count', parseInt(e.target.value))}
+                                          />
+                                        </div>
+                                      )}
                                     </div>
-                                    <div className="space-y-3">
-                                      <div className="relative">
-                                        <span className="absolute left-3 top-1 text-[9px] font-black text-gray-300 uppercase">Clock In</span>
-                                        <input type="time" className="w-full text-xs bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 pt-6 font-black focus:border-black outline-none" value={s.startTime} onChange={e => handleShiftUpdate(s.id, 'startTime', e.target.value)} />
+                                    {!s.noRequirement && (
+                                      <div className="space-y-3">
+                                        <div className="relative">
+                                          <span className="absolute left-3 top-1 text-[9px] font-black text-gray-300 uppercase">Clock In</span>
+                                          <input type="time" className="w-full text-xs bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 pt-6 font-black focus:border-black outline-none" value={s.startTime} onChange={e => handleShiftUpdate(s.id, 'startTime', e.target.value)} />
+                                        </div>
+                                        <div className="relative">
+                                          <span className="absolute left-3 top-1 text-[9px] font-black text-gray-300 uppercase">Clock Out</span>
+                                          <input type="time" className="w-full text-xs bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 pt-6 font-black focus:border-black outline-none" value={s.endTime} onChange={e => handleShiftUpdate(s.id, 'endTime', e.target.value)} />
+                                        </div>
                                       </div>
-                                      <div className="relative">
-                                        <span className="absolute left-3 top-1 text-[9px] font-black text-gray-300 uppercase">Clock Out</span>
-                                        <input type="time" className="w-full text-xs bg-gray-50 border-2 border-gray-100 rounded-2xl p-4 pt-6 font-black focus:border-black outline-none" value={s.endTime} onChange={e => handleShiftUpdate(s.id, 'endTime', e.target.value)} />
-                                      </div>
-                                    </div>
+                                    )}
+                                    <label className="flex items-center gap-2 cursor-pointer group pt-1 border-t border-gray-100">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!s.noRequirement}
+                                        onChange={e => handleShiftUpdate(s.id, 'noRequirement', e.target.checked)}
+                                        className="w-4 h-4 rounded accent-green-600"
+                                      />
+                                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-green-600 transition-colors">No Shift Req</span>
+                                    </label>
                                   </div>
                                 ))}
                               </td>

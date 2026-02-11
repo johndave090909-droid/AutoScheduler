@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Student, DayOfWeek, ClassBlock } from '../types';
 import { DAYS } from '../constants';
 import { subscribeStudents, saveStudent } from '../services/firestoreService';
@@ -18,13 +18,21 @@ const StudentAvailability: React.FC = () => {
   const [student, setStudent] = useState<Student | null>(null);
   const [loginError, setLoginError] = useState('');
   const [loaded, setLoaded] = useState(false);
-  const [saved, setSaved] = useState(false);
+
+  // Draft state — local edits before submission
+  const [draftBlocks, setDraftBlocks] = useState<ClassBlock[]>([]);
+  const [draftFileUrl, setDraftFileUrl] = useState<string>('');
+  const [isDirty, setIsDirty] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   // Busy block form
   const [newDay, setNewDay] = useState<DayOfWeek>('Monday');
   const [newStart, setNewStart] = useState('09:00');
   const [newEnd, setNewEnd] = useState('12:00');
   const [error, setError] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to Firestore students for real-time data
   useEffect(() => {
@@ -38,13 +46,15 @@ const StudentAvailability: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Keep local student in sync with Firestore updates
+  // When student logs in, initialize draft from their current data
   useEffect(() => {
     if (student) {
-      const updated = students.find(s => s.id === student.id);
-      if (updated) setStudent(updated);
+      setDraftBlocks([...student.unavailability]);
+      setDraftFileUrl(student.scheduleFileUrl || '');
+      setIsDirty(false);
+      setSubmitted(false);
     }
-  }, [students]);
+  }, [student?.id]);
 
   const handleLogin = () => {
     const trimmed = idInput.trim();
@@ -60,28 +70,66 @@ const StudentAvailability: React.FC = () => {
       setError('Start time must occur before end time.');
       return;
     }
-    if (!student) return;
     setError('');
-    const updated: Student = {
-      ...student,
-      unavailability: [...student.unavailability, { day: newDay, start: newStart, end: newEnd }]
-    };
-    setStudent(updated);
-    saveStudent(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setDraftBlocks(prev => [...prev, { day: newDay, start: newStart, end: newEnd }]);
+    setIsDirty(true);
   };
 
   const removeBlock = (index: number) => {
+    setDraftBlocks(prev => prev.filter((_, i) => i !== index));
+    setIsDirty(true);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Validate file type
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      setError('Please upload an image (JPG, PNG) or PDF file.');
+      return;
+    }
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File size must be under 5MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setDraftFileUrl(reader.result as string);
+      setIsDirty(true);
+      setError('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeFile = () => {
+    setDraftFileUrl('');
+    setIsDirty(true);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleSubmit = () => {
+    if (!draftFileUrl) {
+      setError('Please upload your semester schedule before submitting.');
+      return;
+    }
+    setShowConfirm(true);
+  };
+
+  const confirmSubmit = () => {
     if (!student) return;
     const updated: Student = {
       ...student,
-      unavailability: student.unavailability.filter((_, i) => i !== index)
+      unavailability: draftBlocks,
+      scheduleFileUrl: draftFileUrl,
+      availabilityStatus: 'submitted'
     };
-    setStudent(updated);
     saveStudent(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setStudent(updated);
+    setIsDirty(false);
+    setShowConfirm(false);
+    setSubmitted(true);
+    setTimeout(() => setSubmitted(false), 4000);
   };
 
   // Loading state
@@ -142,6 +190,8 @@ const StudentAvailability: React.FC = () => {
     );
   }
 
+  const alreadySubmitted = student.availabilityStatus === 'submitted' && !isDirty;
+
   // Availability editor
   return (
     <div className="min-h-screen bg-gray-50">
@@ -159,9 +209,14 @@ const StudentAvailability: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              {saved && (
+              {submitted && (
                 <span className="text-[11px] font-black text-green-600 bg-green-50 px-4 py-2 rounded-xl border border-green-100 animate-pulse">
-                  <i className="fas fa-check mr-1"></i> Saved
+                  <i className="fas fa-check mr-1"></i> Submitted
+                </span>
+              )}
+              {isDirty && (
+                <span className="text-[11px] font-black text-amber-600 bg-amber-50 px-4 py-2 rounded-xl border border-amber-100">
+                  <i className="fas fa-pen mr-1"></i> Draft
                 </span>
               )}
               <div className="hidden sm:flex items-center space-x-3 text-sm text-gray-900 bg-gray-50 px-4 py-2 rounded-xl border-2 border-gray-100">
@@ -196,9 +251,70 @@ const StudentAvailability: React.FC = () => {
               </div>
             </div>
           </div>
-          <div className="bg-gray-50 px-5 py-3 rounded-2xl border border-gray-100 text-center">
-            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Busy Blocks</p>
-            <p className="text-2xl font-black text-gray-900">{student.unavailability.length}</p>
+          <div className="flex items-center gap-4">
+            <div className="bg-gray-50 px-5 py-3 rounded-2xl border border-gray-100 text-center">
+              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Busy Blocks</p>
+              <p className="text-2xl font-black text-gray-900">{draftBlocks.length}</p>
+            </div>
+            {alreadySubmitted && (
+              <div className="bg-green-50 px-5 py-3 rounded-2xl border border-green-200 text-center">
+                <p className="text-[9px] font-black text-green-600 uppercase tracking-widest mb-1">Status</p>
+                <p className="text-sm font-black text-green-700"><i className="fas fa-check-circle mr-1"></i>Submitted</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* File Upload Section */}
+        <div className="bg-white rounded-3xl shadow-sm border-2 border-gray-100 overflow-hidden mb-8">
+          <div className="bg-gray-900 px-8 py-5 flex items-center gap-3">
+            <i className="fas fa-file-image text-indigo-400"></i>
+            <h3 className="text-lg font-black text-white tracking-tight">Semester Schedule Upload</h3>
+            <span className="text-[9px] font-black text-red-400 uppercase tracking-widest ml-2 bg-red-500/10 px-2 py-1 rounded-lg">Required</span>
+          </div>
+          <div className="p-8">
+            {draftFileUrl ? (
+              <div className="space-y-4">
+                <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center text-green-600">
+                      <i className="fas fa-file-circle-check text-xl"></i>
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-green-800">Schedule Uploaded</p>
+                      <p className="text-[10px] text-green-600 font-bold mt-0.5">File ready for submission</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={removeFile}
+                    className="text-xs bg-white text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl font-black border border-red-200 transition-all"
+                  >
+                    <i className="fas fa-trash-alt mr-1"></i> Remove
+                  </button>
+                </div>
+                {draftFileUrl.startsWith('data:image') && (
+                  <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
+                    <img src={draftFileUrl} alt="Schedule preview" className="max-h-64 w-full object-contain bg-gray-50" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-4 border-dashed border-gray-200 rounded-3xl py-16 text-center cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/30 transition-all group"
+              >
+                <i className="fas fa-cloud-arrow-up text-4xl text-gray-300 group-hover:text-indigo-400 mb-4 transition-colors"></i>
+                <p className="text-sm font-black text-gray-400 group-hover:text-indigo-600 transition-colors">Click to upload your semester schedule</p>
+                <p className="text-[10px] text-gray-300 font-bold mt-2">Accepts JPG, PNG, or PDF (max 5MB)</p>
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
           </div>
         </div>
 
@@ -254,10 +370,10 @@ const StudentAvailability: React.FC = () => {
                 <i className="fas fa-calendar-xmark text-red-400"></i>
                 <h3 className="text-lg font-black text-white tracking-tight">My Busy Blocks</h3>
               </div>
-              <span className="text-[11px] font-bold text-white/50">{student.unavailability.length} active</span>
+              <span className="text-[11px] font-bold text-white/50">{draftBlocks.length} active</span>
             </div>
             <div className="p-6">
-              {student.unavailability.length === 0 ? (
+              {draftBlocks.length === 0 ? (
                 <div className="py-16 text-center border-4 border-dashed border-gray-50 rounded-3xl">
                   <i className="fas fa-smile text-gray-200 text-4xl mb-3"></i>
                   <p className="text-gray-300 font-black uppercase tracking-widest text-xs">Full Availability</p>
@@ -265,7 +381,7 @@ const StudentAvailability: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
-                  {student.unavailability.map((b, i) => (
+                  {draftBlocks.map((b, i) => (
                     <div key={i} className="flex justify-between items-center bg-white border-2 border-gray-100 p-5 rounded-2xl shadow-sm hover:border-red-200 transition-all group">
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center text-red-500">
@@ -290,10 +406,45 @@ const StudentAvailability: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-6 bg-indigo-50 border-2 border-indigo-100 rounded-2xl p-4 flex items-center gap-3">
-          <i className="fas fa-info-circle text-indigo-400"></i>
-          <p className="text-[11px] text-indigo-600 font-semibold">
-            Changes are automatically saved and synced with the admin dashboard in real-time.
+        {/* Submit Section */}
+        <div className="mt-8 bg-white rounded-3xl shadow-sm border-2 border-gray-100 p-8">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${!draftFileUrl ? 'bg-red-50 text-red-400' : isDirty ? 'bg-amber-50 text-amber-500' : 'bg-green-50 text-green-500'}`}>
+                <i className={`fas ${!draftFileUrl ? 'fa-exclamation-triangle' : isDirty ? 'fa-cloud-arrow-up' : 'fa-check-circle'} text-xl`}></i>
+              </div>
+              <div>
+                <p className="text-sm font-black text-gray-900">
+                  {!draftFileUrl ? 'Upload Required' : isDirty ? 'Unsaved Changes' : 'All Changes Submitted'}
+                </p>
+                <p className="text-[10px] text-gray-400 font-bold mt-0.5">
+                  {!draftFileUrl
+                    ? 'You must upload your semester schedule before submitting.'
+                    : isDirty
+                    ? 'Your changes are in draft mode. Click Submit to send to the Admin.'
+                    : 'Your availability has been submitted for review.'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={!isDirty || !draftFileUrl}
+              className={`px-10 py-4 rounded-2xl font-black text-sm transition-all shadow-xl flex items-center gap-3 ${
+                isDirty && draftFileUrl
+                  ? 'bg-black text-white hover:bg-gray-800 active:scale-95'
+                  : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+              }`}
+            >
+              <i className="fas fa-paper-plane"></i>
+              Submit to Admin
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 bg-amber-50 border-2 border-amber-100 rounded-2xl p-4 flex items-center gap-3">
+          <i className="fas fa-info-circle text-amber-400"></i>
+          <p className="text-[11px] text-amber-700 font-semibold">
+            Your changes are saved as a draft until you click "Submit to Admin". Only submitted data is visible to the administrator.
           </p>
         </div>
       </main>
@@ -305,6 +456,51 @@ const StudentAvailability: React.FC = () => {
           </p>
         </div>
       </footer>
+
+      {/* Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[999] flex items-center justify-center px-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="bg-gray-900 p-8 text-center">
+              <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/10">
+                <i className="fas fa-paper-plane text-white text-2xl"></i>
+              </div>
+              <h3 className="text-xl font-black text-white tracking-tight">Confirm Submission</h3>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="bg-amber-50 border-2 border-amber-100 rounded-2xl p-5">
+                <p className="text-sm text-amber-800 font-bold leading-relaxed">
+                  Are you sure? Once submitted, your schedule will be sent to the Admin for review. You can still make changes and resubmit later.
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-2xl p-4 space-y-2">
+                <div className="flex justify-between text-[11px]">
+                  <span className="font-bold text-gray-400">Busy Blocks</span>
+                  <span className="font-black text-gray-800">{draftBlocks.length}</span>
+                </div>
+                <div className="flex justify-between text-[11px]">
+                  <span className="font-bold text-gray-400">Schedule File</span>
+                  <span className="font-black text-green-600"><i className="fas fa-check mr-1"></i>Attached</span>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 bg-gray-100 text-gray-600 py-4 rounded-2xl font-black text-sm hover:bg-gray-200 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmSubmit}
+                  className="flex-1 bg-black text-white py-4 rounded-2xl font-black text-sm hover:bg-gray-800 transition-all shadow-xl active:scale-95"
+                >
+                  <i className="fas fa-check mr-2"></i>Yes, Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
